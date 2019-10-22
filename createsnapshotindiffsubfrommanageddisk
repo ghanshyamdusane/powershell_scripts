@@ -1,0 +1,101 @@
+# Set-ExecutionPolicy and change the Execution Policy setting.
+# Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Script to create snapshots, Copy Snaphots
+
+# Get Date & Time
+$StartDateTime = Get-Date -Format ddMMyyyy 
+
+# Provide the name of the Source Resource Group Name where the VMs exits.
+$SourceResourceGroupName_Input = "<>"
+
+# Provide the Source Subscription ID.
+$SourceSubscriptionId_Input = "<>"
+
+#Provide the Destination Resource Group Name.
+$DestinationResourceGroupName_Input = "<>"
+
+#Provide the Destination Storage Account Name.
+$DestinationStorageAccount_Input = "<>"
+
+#provide the Destination Subscription ID.
+$DestinationSubscriptionId_Input = "<>"
+
+Write-Host "The Inputs are as below." -ForegroundColor Cyan
+
+Write-Host "Source ResourceGroup Name :$SourceResourceGroupName_Input" -ForegroundColor White
+Write-Host "Source Subscription ID :$SourceSubscriptionId_Input" -ForegroundColor White
+Write-Host "Destination ResourceGroup Name :$DestinationResourceGroupName_Input" -ForegroundColor White
+Write-Host "Destination Subscription ID :$DestinationSubscriptionId_Input" -ForegroundColor White
+Write-Host "Destination Storage Account Name :$DestinationStorageAccount_Input" -ForegroundColor White
+
+Sleep -Seconds 5
+
+# Login to Azure
+Connect-AzAccount
+
+# Select the Source Subscription ID.
+$SourceSubscription = (Select-AzSubscription -Subscription $SourceSubscriptionId_Input -Force -Verbose).Name
+Write-Host "Working on Subscription: $SourceSubscription" -ForegroundColor Cyan
+
+# Get List of Managed Disks.
+$SourceManagedDataDisks = Get-AzDisk -ResourceGroupName $SourceResourceGroupName_Input
+$SourceManagedDataDisksName = $SourceManagedDataDisks.id | ForEach-Object {$_.split('/')[-1]}
+
+Write-Host "List of all Managed Data Disks are as below." -ForegroundColor Cyan
+Write-Host "$SourceManagedDataDisksName" -ForegroundColor White
+
+# Create Snaphot Config for each Disks.
+$SASURLS = @()
+Foreach ($SourceManagedDataDisk in $SourceManagedDataDisks)
+{
+    $ResourceID = $SourceManagedDataDisk.id.split('/')[-1]
+    Write-Host "Processing for Managed Data Disk : $ResourceID" -ForegroundColor Cyan
+    
+    $SourceSnapshotconfig = New-AzSnapshotConfig -SourceResourceId $SourceManagedDataDisk.id -Location $SourceManagedDataDisk.Location -CreateOption copy    
+    $Snapshot_Name = "$ResourceID" + "_" + "Snapshot" + "_" + "$StartDateTime"
+    Write-Host "Snapshot Name: $Snapshot_Name" -ForegroundColor Green
+
+    $CreateSnapshot = New-AzSnapshot -ResourceGroupName $SourceResourceGroupName_Input -SnapshotName $Snapshot_Name -Snapshot $SourceSnapshotconfig
+    $SnapshotScreationState = $CreateSnapshot.ProvisioningState
+
+    Write-Host "Snapshot Creation State: $SnapshotScreationState" -ForegroundColor Green
+
+    $SASACCESSURL = (Grant-AzSnapshotAccess -ResourceGroupName $SourceResourceGroupName_Input -SnapshotName $Snapshot_Name -DurationInSecond "3600" -Access Read).AccessSAS
+    Write-Host "Snapshot SAS URL: $SASACCESSURL" -ForegroundColor Green
+
+    $SASURLS += @(
+        @{
+            SnapshotName = "$Snapshot_Name"
+            SASURL = "$SASACCESSURL"
+        }
+    )
+}
+
+Write-Host "Below are the SASURLS with Snapshot Names." -ForegroundColor Cyan
+$SASURLS | Format-Table
+
+Sleep -Seconds 5
+
+# Copy Snapshots to Destination Storage Account.
+$DestinationSubscription = (Select-AzSubscription -Subscription $DestinationSubscriptionId_Input -Force -Verbose).Name
+Write-Host "Working on Destination Subscription: $DestinationSubscription" -ForegroundColor Cyan
+
+$DestinationStorageAccountKey = (Get-AzStorageAccountKey -Name $DestinationStorageAccount_Input -ResourceGroupName $DestinationResourceGroupName_Input).Value[0]
+Write-Host "Destination StorageAccount Key: $DestinationStorageAccountKey" -ForegroundColor White
+
+$DestinationStorageAccountContext = New-AzStorageContext -StorageAccountName $DestinationStorageAccount_Input -StorageAccountKey $DestinationStorageAccountKey -Verbose
+$DestinationStorageContainerName = New-AzStorageContainer -Name "snapshotcopy" -Permission Container -Context $DestinationStorageAccountContext -Verbose
+
+Foreach ($SASURL in $SASURLS)
+{   
+    $DestBlobName = $SASURL.SnapshotName
+    $DestBlabVHDName = "$DestBlobName" + ".vhd"  
+    $SnapShotAccessURL = $SASURL.SASURL
+    Write-Host "Copying SnapShot: $DestBlobName" -ForegroundColor Cyan
+
+    Start-AzStorageBlobCopy -AbsoluteUri $SnapShotAccessURL -DestContainer "snapshotcopy" -DestContext $DestinationStorageAccountContext -DestBlob $DestBlabVHDName -Verbose
+
+    Get-AzStorageBlobCopyState -Blob $DestBlabVHDName -Context $DestinationStorageAccountContext -Container "snapshotcopy"
+   
+} 
