@@ -1,0 +1,2 @@
+StorageAccountName,StorageAccountKey,SourceContainer,DestinationContainer
+stgname,stgacckey,source-container,Destination-Container
