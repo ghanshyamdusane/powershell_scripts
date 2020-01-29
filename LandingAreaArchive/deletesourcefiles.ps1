@@ -4,7 +4,12 @@ $IMPORT=Import-Csv -Path $WorkDir\StorageAccountDeatils.csv
 $FileName=("files-$(Get-Date)" -split " ")[0]
 $Days = 7
 $CBCKDays = 2
-
+$DTE = (Get-Date).Date
+$DTE = $DTE.AddDays(-$Days)
+Write-Host $DTE
+$DTECBCK = (Get-Date).Date
+$DTECBCK = $DTECBCK.AddDays(-$CBCKDays)
+Write-Host $DTECBCK
 foreach ( $data in $IMPORT ) { 
 
 $STGACCNAME=$data.StorageAccountName
@@ -27,7 +32,7 @@ New-Item -Path $WorkDir -Name $finalCBCKtextname -ItemType "file" -ErrorAction I
 
 $StorageAccountContext = New-AzureStorageContext -StorageAccountName $STGACCNAME -StorageAccountKey $STGACCNAMEKEY -ErrorAction Stop
 $COPYDATAs = Get-AzureStorageBlob -Container $CONTAINERNAME -Context $StorageAccountContext | Where-Object { 
-$_.LastModified.DateTime -lt ((Get-Date).AddDays(-$Days)) -and  ( $_.Name -notmatch 'CB|CK' )
+$_.LastModified.DateTime -lt ( $DTE ) -and  ( $_.Name -notmatch 'CB|CK' )
 }
 
 foreach  ( $COPYDATA in $COPYDATAs ) { 
@@ -65,7 +70,7 @@ exit 0
 
 #####################################################################################
 $COPYCBCKDATAs = Get-AzureStorageBlob -Container $CONTAINERNAME -Context $StorageAccountContext | Where-Object { 
-$_.LastModified.DateTime -lt ((Get-Date).AddDays(-$CBCKDays)) -and  ( $_.Name -match 'CB|CK' ) 
+$_.LastModified.DateTime -lt ( $DTECBCK ) -and  ( $_.Name -match 'CB|CK' ) 
 }
 
 foreach  ( $COPYCBCKDATA in $COPYCBCKDATAs ) { 
@@ -98,4 +103,6 @@ Remove-AzureStorageBlob -Container $CONTAINERNAME -Blob $COPYCBCKDATA.Name -Cont
 else {
 Write-Host "Copy Operation Got Failed"
 exit 0
+}
+
 }
